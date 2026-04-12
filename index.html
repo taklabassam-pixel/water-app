@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta charset="UTF-8">
+    <title>برنامج تعبئة المياه - الإدارة الأسبوعية والشهرية</title>
+    <style>
+        :root { --primary: #2980b9; --success: #27ae60; --bg: #f4f7f6; }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); padding: 20px; text-align: center; }
+        .container { max-width: 1100px; margin: auto; background: white; padding: 25px; border-radius: 15px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); }
+        .apt-grid { display: flex; justify-content: center; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+        .apt-btn { padding: 10px 15px; border: 2px solid var(--primary); background: white; color: var(--primary); border-radius: 8px; cursor: pointer; font-weight: bold; }
+        .apt-btn.active { background: var(--primary); color: white; }
+        .input-section { background: #eef2f3; padding: 15px; border-radius: 12px; margin-bottom: 20px; display: inline-flex; gap: 10px; align-items: center; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; background: white; }
+        th, td { border: 1px solid #ddd; padding: 12px; text-align: center; }
+        th { background: var(--primary); color: white; font-size: 0.9em; }
+        .free { color: green; font-weight: bold; }
+        .paid { color: red; font-weight: bold; }
+        .monthly-summary { margin-top: 40px; border: 2px solid var(--success); border-radius: 10px; overflow: hidden; }
+        .monthly-summary h3 { background: var(--success); color: white; margin: 0; padding: 10px; }
+        .week-header { background: #ecf0f1; font-weight: bold; color: #2c3e50; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>🚰 برنامج تعبئة المياه</h1>
+    
+    <div class="apt-grid">
+        <script>
+            for(let i=1; i<=7; i++) document.write(`<button class="apt-btn" id="btn-apt-${i}" onclick="switchApartment('${i}')">شقة ${i}</button>`);
+        </script>
+    </div>
+
+    <div class="input-section">
+        <input type="number" id="duration" placeholder="المدة (دقيقة)">
+        <button onclick="addNewEntry()" style="background:var(--success); color:white; border:none; padding:10px 25px; border-radius:8px; cursor:pointer; font-weight:bold;">+ تسجيل التعبئة</button>
+        <button onclick="clearAll()" style="background:#e74c3c; color:white; border:none; padding:10px; border-radius:8px; cursor:pointer; font-size:0.8em;">تصفير البيانات</button>
+    </div>
+
+    <h2 id="table-title">سجل شقة 1</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>اليوم</th>
+                <th>التاريخ</th>
+                <th>وقت التعبئة</th>
+                <th>المدة (د)</th>
+                <th>مجانية</th>
+                <th>شراء</th>
+                <th>التكلفة ($)</th>
+            </tr>
+        </thead>
+        <tbody id="log-table"></tbody>
+    </table>
+
+    <div class="monthly-summary">
+        <h3>📊 حصيلة الشهر مفصلة بالأسابيع</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>الشهر</th>
+                    <th>الأسبوع</th>
+                    <th>إجمالي الدقائق</th>
+                    <th>إجمالي الشراء (د)</th>
+                    <th>التكلفة ($)</th>
+                </tr>
+            </thead>
+            <tbody id="monthly-table"></tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    let allData = JSON.parse(localStorage.getItem('waterSystemDataV3')) || { "1":[], "2":[], "3":[], "4":[], "5":[], "6":[], "7":[] };
+    let currentApt = "1";
+    const LIMIT = 50, RATE = 0.20;
+    const daysArr = ["الأحد", "الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
+
+    // دالة لتحديد رقم الأسبوع في الشهر
+    function getWeekOfMonth(date) {
+        const startWeekDate = new Date(date.getFullYear(), date.getMonth(), 1);
+        const offsetDate = date.getDate() + startWeekDate.getDay() - 1;
+        return Math.floor(offsetDate / 7) + 1;
+    }
+
+    // دالة لتحديد تاريخ بداية الأسبوع (الإثنين) للحساب البرمجي
+    function getMonday(d) {
+        d = new Date(d);
+        let day = d.getDay(), diff = d.getDate() - day + (day == 0 ? -6:1);
+        return new Date(d.setDate(diff)).toDateString();
+    }
+
+    function switchApartment(n) {
+        currentApt = n;
+        document.querySelectorAll('.apt-btn').forEach(b => b.classList.remove('active'));
+        document.getElementById(`btn-apt-${n}`).classList.add('active');
+        document.getElementById('table-title').innerText = `سجل شقة ${n}`;
+        render();
+    }
+
+    function addNewEntry() {
+        let mins = parseInt(document.getElementById('duration').value);
+        if(!mins || mins <= 0) return;
+        
+        let now = new Date();
+        let aptData = allData[currentApt];
+        let weekKey = getMonday(now);
+
+        // حساب المجاني بناءً على الأسبوع الحالي فقط
+        let currentWeekFreeSum = aptData.filter(i => i.weekKey === weekKey).reduce((s, i) => s + i.free, 0);
+        let free = Math.max(0, Math.min(mins, LIMIT - currentWeekFreeSum));
+        let paid = mins - free;
+
+        aptData.push({
+            day: daysArr[now.getDay()],
+            date: now.toLocaleDateString('en-GB'),
+            time: now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
+            monthName: now.toLocaleString('ar-EG', { month: 'long', year: 'numeric' }),
+            weekNumber: getWeekOfMonth(now),
+            weekKey: weekKey,
+            duration: mins,
+            free: free,
+            paid: paid,
+            cost: (paid * RATE).toFixed(2)
+        });
+
+        localStorage.setItem('waterSystemDataV3', JSON.stringify(allData));
+        render();
+        document.getElementById('duration').value = "";
+    }
+
+    function render() {
+        const aptData = allData[currentApt];
+        
+        // 1. تحديث جدول السجل اليومي
+        document.getElementById('log-table').innerHTML = aptData.map(item => `
+            <tr>
+                <td>${item.day}</td>
+                <td>${item.date}</td>
+                <td style="font-family:monospace"><b>${item.time}</b></td>
+                <td>${item.duration}</td>
+                <td class="free">${item.free || '-'}</td>
+                <td class="paid">${item.paid || '-'}</td>
+                <td><b>${item.cost} $</b></td>
+            </tr>
+        `).reverse().join('');
+
+        // 2. تحديث حصيلة الشهر والأسابيع
+        const summary = {};
+        aptData.forEach(item => {
+            const key = `${item.monthName}-الأسبوع ${item.weekNumber}`;
+            if(!summary[key]) summary[key] = { month: item.monthName, week: item.weekNumber, total: 0, paid: 0, cost: 0 };
+            summary[key].total += item.duration;
+            summary[key].paid += item.paid;
+            summary[key].cost += parseFloat(item.cost);
+        });
+
+        document.getElementById('monthly-table').innerHTML = Object.keys(summary).map(key => `
+            <tr>
+                <td>${summary[key].month}</td>
+                <td>الأسبوع ${summary[key].week}</td>
+                <td>${summary[key].total} د</td>
+                <td class="paid">${summary[key].paid} د</td>
+                <td><b>${summary[key].cost.toFixed(2)} $</b></td>
+            </tr>
+        `).join('');
+    }
+
+    function clearAll() {
+        if(confirm("هل أنت متأكد من حذف جميع البيانات؟")) {
+            localStorage.removeItem('waterSystemDataV3');
+            location.reload();
+        }
+    }
+
+    switchApartment("1");
+</script>
+
+</body>
+</html>
